@@ -1,206 +1,382 @@
-#########################################
-### Majora's Mask Dog Race Simulation ###
-#########################################
+###########################################
+# Relevant C Source Excerpts (z_en_racedog.c)
+###########################################
+#
+# 1) sBaseSpeeds array:
+#    static f32 sBaseSpeeds[][2] = {
+#        { 0.0f, 0.0f }, // 0 => DOG_COLOR_DEFAULT
+#        { 5.0f, 5.5f }, // 1 => DOG_COLOR_WHITE
+#        { 5.0f, 5.0f }, // 2 => DOG_COLOR_GRAY
+#        { 5.5f, 5.0f }, // 3 => DOG_COLOR_BEIGE
+#        { 4.5f, 5.5f }, // 4 => DOG_COLOR_BROWN
+#        { 6.0f, 4.0f }, // 5 => DOG_COLOR_BLUE
+#        { 4.0f, 6.0f }, // 6 => DOG_COLOR_GOLD
+#    };
+#
+# 2) DogColor enum (the dog's fur colour):
+#    typedef enum {
+#        /* 0 */ DOG_COLOR_DEFAULT,
+#        /* 1 */ DOG_COLOR_WHITE,
+#        /* 2 */ DOG_COLOR_GRAY,
+#        /* 3 */ DOG_COLOR_BEIGE,
+#        /* 4 */ DOG_COLOR_BROWN,
+#        /* 5 */ DOG_COLOR_BLUE,
+#        /* 6 */ DOG_COLOR_GOLD
+#    } DogColor;
+#
+# 3) Condition distribution:
+#    - 4 dogs = good
+#    - 5 dogs = neutral
+#    - 5 dogs = bad
+#
+# 4) Speed logic:
+#    - At the start, the blue dog (enum=5) uses its "first" base speed (6.0).
+#      Others effectively start at 5.0.
+#    - After 1/4, they may switch to second base speed if they've crossed
+#      "pointToUseSecondBaseSpeed".
+#    - In the last 1/4, they may sprint (if not in bad condition) with a
+#      multiplier up to 2.0.
+#
+# 5) The array pointToUseSecondBaseSpeed from sDogInfo[]:
+#    e.g. dog 0 => 9, dog 1 => 9, dog 2 => 10, dog 3 => 9, dog 4 => 8, etc.
+#
+# Below we replicate these mechanics in R with a time-step approach,
+# plus a base R progress bar and user-friendly dog selection.
+###########################################
 
 
-# Create Dog Data ---------------------------------------------------------
+###########################################
+# 1. Data and Constants
+###########################################
 
-# This section defines the initial setup for the dog race simulation, 
-# including the dogs' attributes and simulation logic.
-
-# Define dog colours and speeds
-# Each dog colour is associated with specific speeds for the race phases: 
-# the first quarter and the remaining three-quarters.
-dogs <- data.frame(
-  color                     = c("White", "Grey", "Beige", "Brown", "Blue", "Gold"), # Dog colours in the race
-  first_quarter_speed       = c(5.0,     5.0,    5.5,     4.5,     6.0,    4.0),    # Speed for the first 25% of the race
-  last_three_quarters_speed = c(5.5,     5.0,    5.0,     5.5,     4.0,    6.0),    # Speed for the last 75% of the race
-  count                     = c(4,       3,      3,       2,       1,      1)       # Number of dogs per colour
+# sBaseSpeeds (in R, 1-based rows):
+#   row1 => DOG_COLOR_DEFAULT(0) => {0.0, 0.0}
+#   row2 => DOG_COLOR_WHITE  (1) => {5.0, 5.5}
+#   row3 => DOG_COLOR_GRAY   (2) => {5.0, 5.0}
+#   row4 => DOG_COLOR_BEIGE  (3) => {5.5, 5.0}
+#   row5 => DOG_COLOR_BROWN  (4) => {4.5, 5.5}
+#   row6 => DOG_COLOR_BLUE   (5) => {6.0, 4.0}
+#   row7 => DOG_COLOR_GOLD   (6) => {4.0, 6.0}
+sBaseSpeeds <- matrix(
+  c(
+    0.0, 0.0,   # row1 => Default
+    5.0, 5.5,   # row2 => White
+    5.0, 5.0,   # row3 => Gray
+    5.5, 5.0,   # row4 => Beige
+    4.5, 5.5,   # row5 => Brown
+    6.0, 4.0,   # row6 => Blue
+    4.0, 6.0    # row7 => Gold
+  ),
+  ncol = 2, byrow = TRUE
 )
 
-# Create individual rows for each dog by replicating based on the count of dogs for each colour
-all_dogs <- dogs[rep(seq_len(nrow(dogs)), times = dogs$count), ]
+# The 14 dogs' colours, from sDogInfo in the game:
+#  dog 0 => 3 (Beige), dog 1 => 1 (White), dog 2 => 5 (Blue), dog 3 => 2 (Gray),
+#  dog 4 => 4 (Brown), dog 5 => 2 (Gray), dog 6 => 3 (Beige), dog 7 => 1 (White),
+#  dog 8 => 1 (White), dog 9 => 6 (Gold), dog 10 => 2 (Gray), dog 11 => 3 (Beige),
+#  dog 12 => 1 (White), dog 13 => 4 (Brown)
+dog_colours <- c(3,1,5,2,4,2,3,1,1,6,2,3,1,4)
+n_dogs      <- length(dog_colours)  # 14
 
-# Generate unique names for each dog using its colour and an index number within its colour group
-dog_index_within_colour <- ave(all_dogs$color, all_dogs$color, FUN = seq_along)
-dog_names <- paste0(all_dogs$color, "_", dog_index_within_colour)
+# Condition distribution: 4 good, 5 neutral, 5 bad
+dog_condition_types <- c(rep("good",4), rep("neutral",5), rep("bad",5))
+
+# from sDogInfo: the distance point to use second base speed
+#  in the game, these are path indices 8..10, but we map them
+#  to (index/12)*race_length in the code
+pt_to_use_2nd <- c(9,9,10,9,8,9,9,9,9,8,9,9,9,8)
+
+# Full colour labels (0..6 => 7 total). We'll exclude "Default" from final outputs.
+color_labels <- c("Default","White","Gray","Beige","Brown","Blue","Gold")
 
 
-# END of create dog data --------------------------------------------------
-# -------------------------------------------------------------------------
-# Random Number Generator Function ----------------------------------------
-
-# Here we create the RNG used to add speed fluctuations to the dog. It was made to mirror the 
-# source code found at XXXXXX.
-
-# Define constants for the random number generator (RNG)
-# These constants match those used in XXXX's source code.
-RAND_MULTIPLIER <- 1664525    # Multiplier constant for RNG
-RAND_INCREMENT <- 1013904223  # Increment constant for RNG
-MODULUS <- 2^32               # Modulus for the RNG, ensuring it loops within 32-bit integers
-
-# RNG Function: Computes the next random state using a Linear Congruential Generator (LCG).
-# LCG is a simple and widely used algorithm for generating pseudo-random numbers.
-# It works by applying a linear formula to compute the next number in a sequence based on the previous one.
-# In this case, the formula is: (current_state * multiplier + increment) % modulus and 
-# it mirrors the pseudo-random number generator used in the original game (N64 code).
-next_rng <- function(rng) {
-  return((rng * RAND_MULTIPLIER + RAND_INCREMENT) %% MODULUS)
+###########################################
+# 1a. Build dog_labels for finishing matrix
+###########################################
+# Each dog gets a label like "beige_1", "white_1", "gray_1", etc.
+build_dog_labels <- function(dog_colours, color_labels) {
+  color_counts <- setNames(as.list(rep(0L, length(color_labels))), color_labels)
+  labels_out   <- character(length(dog_colours))
+  
+  for (i in seq_along(dog_colours)) {
+    c_enum  <- dog_colours[i]
+    # note +1 to handle R's 1-based row indexing
+    c_label <- color_labels[c_enum + 1]
+    color_counts[[c_label]] <- color_counts[[c_label]] + 1
+    # e.g. "beige_1", "white_2", "blue_1", etc.
+    labels_out[i] <- paste0(tolower(c_label), "_", color_counts[[c_label]])
+  }
+  labels_out
 }
 
-# Function to map an RNG state to a random fluctuation in the range [-0.5, 0.5]
-# The fluctuation represents randomness in the dog's speed during the race. 
-# This is applied every frame of the game. 
-map_rng_to_speed <- function(rng) {
-  normalised_rng <- rng / (MODULUS - 1)  # Normalize the RNG state to [0, 1]
-  fluctuation <- (normalised_rng * 1.0) - 0.5  # Map to the range [-0.5, 0.5]
-  return(fluctuation)
+dog_labels <- build_dog_labels(dog_colours, color_labels)
+
+# Condition multiplier function
+# Good => ×1.2, Bad => ÷1.2, Neutral => ×1.0
+condition_multiplier <- function(cond) {
+  if (cond == "good") return(1.2)
+  if (cond == "bad")  return(1/1.2)
+  1.0
 }
 
 
-# END of RNG function -----------------------------------------------------
-# -------------------------------------------------------------------------
-# Simulate Dog Race Function ----------------------------------------------
+###########################################
+# 2. RNG (LCG) Implementation in R
+###########################################
+# We store the seed as a double in [0, 2^32)
+# to avoid integer overflow in 32-bit multiplication.
+
+RNGenv <- new.env()
+RNGenv$seed <- 0.0  # user can set, e.g. RNGenv$seed <- 1234.0
+
+rand_centered_float <- function(range = 1.0) {
+  # The constants 1664525 and 1013904223 are from the original code
+  RNGenv$seed <- (RNGenv$seed * 1664525 + 1013904223) %% 4294967296
+  # convert [0,1) => [-0.5,0.5] => scale by 'range'
+  ((RNGenv$seed / 4294967296) - 0.5) * range
+}
 
 
-# Main simulation function for the dog race
-simulate_dograce <- function(n_sims = 1000, 
-                             fps = 30, 
-                             race_length = 1000, 
-                             selected_dog = NULL) {
-  # Set a fixed seed for reproducibility
-  set.seed(1701)
+###########################################
+# 3. Main Simulation Function (Option 1)
+###########################################
+simulate_dograce <- function(n_sims,
+                             race_length = 1000,
+                             selected_dog = 1,  # can be numeric or a string label
+                             show_progress = TRUE) {
+  # 3.1. Convert selected_dog to numeric if string
+  if (is.character(selected_dog)) {
+    dog_index <- match(selected_dog, dog_labels)
+    if (is.na(dog_index)) {
+      stop("Error: 'selected_dog' label not found in dog_labels. Provided: ", selected_dog)
+    }
+    selected_dog <- dog_index
+  } else if (!is.numeric(selected_dog)) {
+    stop("selected_dog must be numeric or character.")
+  }
   
-  # Define distances for race phases
-  first_quarter_distance <- race_length * 0.25        # First 25% of the race
-  last_three_quarters_distance <- race_length * 0.75  # Remaining 75% of the race
-  n_dogs <- nrow(all_dogs)                            # Total number of dogs in the race
+  # Safety: ensure the numeric index is in 1..n_dogs
+  if (selected_dog < 1 || selected_dog > n_dogs) {
+    stop("selected_dog numeric index out of range (1..", n_dogs, ").")
+  }
   
-  # Initialise win counters for dog colours and individual dogs
-  unique_colours <- unique(all_dogs$color)
-  colour_win_counts <- setNames(rep(0, length(unique_colours)), unique_colours)
-  dog_win_counts <- setNames(rep(0, n_dogs), dog_names)
+  finish_matrix  <- matrix(0, nrow = n_sims, ncol = n_dogs)
+  winners        <- integer(n_sims)
+  winner_colours <- integer(n_sims)
   
-  # Matrix to store the finishing positions of all dogs across simulations
-  finish_position <- matrix(0, nrow = n_sims, ncol = n_dogs)
-  colnames(finish_position) <- dog_names
+  # Optionally create a progress bar
+  if (show_progress) {
+    pb <- txtProgressBar(min = 0, max = n_sims, style = 3)
+  }
   
-  # Progress bar to monitor simulation progress
-  pb <- txtProgressBar(min = 0, max = n_sims, style = 3)
-  
-  for (sim_i in seq_len(n_sims)) {
-    # Randomly assign conditions to dogs: "good", "neutral", or "bad"
-    # The proportions match the original game (4 good, 5 neutral, 5 bad).
-    conditions <- sample(c(rep("good", 4), rep("neutral", 5), rep("bad", 5)))
-    speed_multiplier <- ifelse(conditions == "good", 1.2, ifelse(conditions == "bad", 1 / 1.2, 1))
+  ###########################################
+  # Function to simulate one race
+  ###########################################
+  simulate_one_race <- function() {
+    # randomly assign 4 good, 5 neutral, 5 bad
+    assigned_conds <- sample(dog_condition_types, n_dogs, replace = FALSE)
     
-    # Initialise distance covered by each dog
-    distances <- rep(0, n_dogs)
+    # Build dog_data for all 14 dogs
+    dog_data <- lapply(seq_len(n_dogs), function(i) {
+      list(
+        colour       = dog_colours[i],
+        condition    = assigned_conds[i],
+        dist_for_2nd = (pt_to_use_2nd[i] / 12) * race_length,
+        sprint_mult  = NA_real_,
+        finished     = FALSE,
+        finish_rank  = NA_integer_,
+        position     = 0.0,
+        speed        = 0.0
+      )
+    })
     
-    # Initialise RNG states for each dog
-    rng_states <- sample(0:(MODULUS - 1), n_dogs)
+    # sSprintTimer increments once the first-place dog passes 3/4
+    sSprintTimer      <- 0
+    quarter_len       <- 0.25 * race_length
+    three_quarter_len <- 0.75 * race_length
     
-    # Initialise sprint-related variables
-    sSprintTimer <- 0
-    sprint_multipliers <- rep(1.0, n_dogs)
+    # At race start, if dog is Blue(enum=5), use sBaseSpeeds[6,1]=6.0
+    # Others => 5.0
+    for (k in seq_len(n_dogs)) {
+      col <- dog_data[[k]]$colour
+      if (col == 5) {
+        dog_data[[k]]$speed <- sBaseSpeeds[col + 1, 1]  # row6 => 6.0
+      } else {
+        dog_data[[k]]$speed <- 5.0
+      }
+    }
     
-    # Simulate the race frame by frame
-    while (any(distances < race_length)) {
-      # Determine the rank (position) of each dog based on their current distance
-      positions <- rank(-distances, ties.method = "first")
-      
-      for (dog_i in seq_len(n_dogs)) {
-        if (distances[dog_i] < race_length) {
-          # Update the RNG state for this dog and compute a fluctuation
-          rng_state <- next_rng(rng_states[dog_i])
-          rng_states[dog_i] <- rng_state
-          fluctuation <- map_rng_to_speed(rng_state)
-          
-          # Determine the base speed based on the race phase
-          base_speed <- if (distances[dog_i] < first_quarter_distance) {
-            all_dogs$first_quarter_speed[dog_i]
+    get_first_place <- function(dd) which.max(vapply(dd, `[[`, numeric(1), "position"))
+    
+    ###########################################
+    # Speed update logic each step
+    ###########################################
+    update_speeds <- function(dd, sprint_time) {
+      idx_first <- get_first_place(dd)
+      for (k in seq_along(dd)) {
+        dpos <- dd[[k]]$position
+        col  <- dd[[k]]$colour
+        cond <- dd[[k]]$condition
+        
+        base_spd <- 0.0
+        if (dpos < quarter_len) {
+          # first quarter
+          if (col == 5) {
+            base_spd <- sBaseSpeeds[col + 1, 1] + rand_centered_float(1.0)
           } else {
-            # Apply sprint multiplier in the final stretch of the race
-            if (is.na(sprint_multipliers[dog_i]) && distances[dog_i] >= last_three_quarters_distance) {
-              sprint_multipliers[dog_i] <- if (sSprintTimer < 100) {
-                200 / (200 - sSprintTimer)
+            base_spd <- 5.0 + rand_centered_float(1.0)
+          }
+          
+        } else if (dpos < three_quarter_len) {
+          # from 1/4 to 3/4
+          if (dpos >= dd[[k]]$dist_for_2nd) {
+            base_spd <- sBaseSpeeds[col + 1, 2] + rand_centered_float(1.0)
+          } else {
+            base_spd <- 5.0 + rand_centered_float(1.0)
+          }
+          
+        } else {
+          # final 1/4
+          # if sprint_mult not set, do it now (unless bad)
+          if (is.na(dd[[k]]$sprint_mult)) {
+            if (cond == "bad") {
+              dd[[k]]$sprint_mult <- 1.0
+            } else {
+              # 2.0 max if sSprintTimer >=100
+              if (sprint_time < 100) {
+                dd[[k]]$sprint_mult <- 200.0 / (200.0 - sprint_time)
               } else {
-                2.0
+                dd[[k]]$sprint_mult <- 2.0
               }
-              sSprintTimer <- sSprintTimer + 1
             }
-            sprint_multipliers[dog_i] * all_dogs$last_three_quarters_speed[dog_i]
           }
-          
-          # Apply a bonus for good condition if the dog is not in the lead
-          if (conditions[dog_i] == "good" && positions[dog_i] > 1) {
-            base_speed <- base_speed * 1.2
+          base_spd <- sBaseSpeeds[col + 1, 2] + rand_centered_float(1.0)
+          base_spd <- base_spd * dd[[k]]$sprint_mult
+        }
+        
+        # Apply condition multiplier
+        base_spd <- base_spd * condition_multiplier(cond)
+        
+        # The selected dog has a cap of 7.5, others 7.0
+        max_spd <- if (k == selected_dog) 7.5 else 7.0
+        base_spd <- min(base_spd, max_spd)
+        
+        dd[[k]]$speed <- base_spd
+      }
+      dd
+    }
+    
+    # Step until all 14 dogs finish
+    rank_counter <- 0
+    while (rank_counter < n_dogs) {
+      idx_first <- get_first_place(dog_data)
+      
+      # increment sSprintTimer once first-place dog crosses 3/4
+      if (!dog_data[[idx_first]]$finished &&
+          dog_data[[idx_first]]$position >= three_quarter_len) {
+        sSprintTimer <- sSprintTimer + 1
+      }
+      
+      # update speeds
+      dog_data <- update_speeds(dog_data, sSprintTimer)
+      
+      # move dogs
+      for (k in seq_along(dog_data)) {
+        if (!dog_data[[k]]$finished) {
+          dog_data[[k]]$position <- dog_data[[k]]$position + dog_data[[k]]$speed
+          if (dog_data[[k]]$position >= race_length) {
+            dog_data[[k]]$finished <- TRUE
+            rank_counter <- rank_counter + 1
+            dog_data[[k]]$finish_rank <- rank_counter
           }
-          
-          # Compute the dog's speed for this frame, including fluctuation
-          speed_this_frame <- base_speed + fluctuation
-          
-          # Update the dog's distance
-          distances[dog_i] <- distances[dog_i] + (speed_this_frame / fps)
         }
       }
     }
     
-    # Determine final finishing positions for this simulation
-    finish_positions <- rank(-distances, ties.method = "first")
-    finish_position[sim_i, ] <- finish_positions
-    
-    # Update win counts for the winning dog's colour and individual identity
-    winner_index <- which(finish_positions == 1)
-    winner_colour <- all_dogs$color[winner_index]
-    colour_win_counts[winner_colour] <- colour_win_counts[winner_colour] + 1
-    dog_win_counts[dog_names[winner_index]] <- dog_win_counts[dog_names[winner_index]] + 1
-    
-    # Update progress bar
-    setTxtProgressBar(pb, sim_i)
+    dog_data
   }
-  close(pb)
   
-  # Compute probabilities and races needed for 99.99% win certainty
-  prob_each_colour <- colour_win_counts / n_sims
-  prob_each_dog <- dog_win_counts / n_sims
-  races_needed <- ceiling(log(0.0001) / log(1 - prob_each_colour))
+  ###########################################
+  # 3.2. Run all simulations
+  ###########################################
+  for (sim_id in seq_len(n_sims)) {
+    race_result <- simulate_one_race()
+    
+    # record finishing ranks
+    for (j in seq_len(n_dogs)) {
+      finish_matrix[sim_id, j] <- race_result[[j]]$finish_rank
+    }
+    
+    # find the winner (rank=1)
+    dog_winner <- which.min(vapply(race_result, `[[`, numeric(1), "finish_rank"))
+    winners[sim_id]        <- dog_winner
+    winner_colours[sim_id] <- race_result[[dog_winner]]$colour
+    
+    # update progress bar if desired
+    if (show_progress) {
+      setTxtProgressBar(pb, sim_id)
+    }
+  }
   
-  # Return results as a list
+  if (show_progress) {
+    close(pb)
+  }
+  
+  ###########################################
+  # 4. Summarise results
+  ###########################################
+  dog_win_counts   <- tabulate(winners, nbins = n_dogs)
+  dog_win_probs    <- dog_win_counts / n_sims
+  
+  # colour is 0..6 => shift by +1 for R indexing
+  col_win_counts <- tabulate(winner_colours + 1, nbins = length(color_labels))
+  col_win_probs  <- col_win_counts / n_sims
+  
+  mean_finish_positions <- colMeans(finish_matrix)
+  
+  # Remove "Default" from final colour results
+  col_win_probs_no_def    <- col_win_probs[-1]
+  color_labels_no_default <- color_labels[-1]
+  
+  # Races for 99.99% chance => (1 - p)^N <= 0.0001 => N >= log(0.0001)/log(1 - p)
+  races_for_99_99 <- sapply(col_win_probs_no_def, function(p) {
+    if (p <= 0) return(Inf)
+    ceiling(log(0.0001) / log(1 - p))
+  })
+  
+  # Name dog-based results with dog_labels
+  dog_win_prob_named <- setNames(dog_win_probs, dog_labels)
+  colnames(finish_matrix) <- dog_labels
+  mean_finish_positions_named  <- setNames(mean_finish_positions, dog_labels)
+  
+  # Name colour-based results (excluding "Default")
+  colour_win_probability_named <- setNames(col_win_probs_no_def, color_labels_no_default)
+  races_for_99_99_named        <- setNames(races_for_99_99,      color_labels_no_default)
+  
+  ###########################################
+  # Final output
+  ###########################################
   list(
-    prob_each_colour       = sort(prob_each_colour, decreasing = TRUE),
-    prob_each_dog          = sort(prob_each_dog, decreasing = TRUE),
-    races_needed_99.99     = races_needed,
-    finish_position = finish_position,
-    dog_names              = dog_names
+    dog_win_probability        = sort(dog_win_prob_named, decreasing = T),
+    colour_win_probability     = sort(colour_win_probability_named, decreasing = T),
+    mean_finish_position       = sort(mean_finish_positions_named, decreasing = F),
+    races_for_99_99_per_colour = races_for_99_99_named,
+    finish_positions_all       = finish_matrix
   )
 }
 
-# END of simulation function ----------------------------------------------
-# -------------------------------------------------------------------------
-# Example -----------------------------------------------------------------
+###########################################
+# 4. Example Usage
+###########################################
 
-# Simulate the race 1000 times with a race length of 100 and selected dog is the gold dog.
-results <- simulate_dograce(n_sims = 100, race_length = 100, selected_dog = "Gold_1")
-
-# View probabilities of each colour and individual dog's win chances
-results$prob_each_colour   # probablility of each (overall) colour winning
-results$prob_each_dog      # probablility of each individual dog winning 
-results$races_needed_99.99 # Number of races needed to be run to have a 99.99% chance of winning 
-results$finish_position    # Each dogs finish position over all simulations
-
-
-
-# END of example ----------------------------------------------------------
-# -------------------------------------------------------------------------
-# Visualisations ----------------------------------------------------------
-
-
-
-
-
-
-
+set.seed(999)        # controls R's default RNG for sample()
+RNGenv$seed <- 1234.0  # RNG function seed
+results <- simulate_dograce(n_sims = 1000, race_length = 1000, selected_dog = 'blue_1', show_progress = TRUE)
+results$dog_win_probability
+results$colour_win_probability
+results$mean_finish_position
+results$races_for_99_99_per_colour
+head(results$finish_positions_all)
 
 
 
