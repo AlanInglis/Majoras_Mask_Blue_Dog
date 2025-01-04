@@ -1,9 +1,16 @@
 # Majora's Mask Dog Race Minigame Simulation
 
+<!-- badges: start -->
+<img src="https://raw.githubusercontent.com/AlanInglis/Majoras_Mask_Blue_Dog/refs/heads/main/badges/mm_heart.jpeg" width="241" height="209" align="right" />
+<!-- badges: end -->
+
+
+
 This repository contains an R implementation of a simulation replicating the mechanics of a dog race, 
 inspired by a classic game from the Nintendo 64 era and the recent video by XXXXXXXXXXXXX
 The simulation accounts for individual dog characteristics, race conditions, 
 and randomised speed variations, all contributing to a realistic and probabilistic outcome.
+
 
 ## Features
 
@@ -159,12 +166,18 @@ This project is licensed under the MIT License. See the LICENSE file for details
 
 ---
 
+
 ## Acknowledgements
 
 This project was inspired by the dog race mechanics from a classic Nintendo 64 game found at XXXXXXXXXX.
 Special thanks to the community for making the game's source code available for study and analysis and to 
 XXXXXXXX for inspiring this analysis.
 
+
+
+<!-- badges: start -->
+<img src="https://raw.githubusercontent.com/AlanInglis/Majoras_Mask_Blue_Dog/refs/heads/main/badges/MM_Dog_Blue_Model.webp" width="250" height="245" align="left" />
+<!-- badges: end -->
 
 
 
