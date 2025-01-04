@@ -7,9 +7,12 @@
 
 
 This repository contains an R implementation of a simulation replicating the mechanics of a dog race, 
-inspired by a classic game from the Nintendo 64 era and the recent video by XXXXXXXXXXXXX
+inspired by a classic game from the Nintendo 64 era and the Vidya James YouTube
+video [Why Majora's Mask's Blue Dog Took 25 Years to Win the Race](https://www.youtube.com/watch?v=Y1l6Xj4PLEk).
 The simulation accounts for individual dog characteristics, race conditions, 
-and randomised speed variations, all contributing to a realistic and probabilistic outcome.
+and randomised speed variations, all contributing to a realistic and probabilistic outcome. 
+The **original C source code** is hosted on the Marjoa's Mask [zeldaret](https://github.com/zeldaret/mm) GitHub repo.
+
 
 
 ## Features
