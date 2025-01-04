@@ -138,7 +138,7 @@ rand_centered_float <- function(range = 1.0) {
 
 
 ###########################################
-# 3. Main Simulation Function (Option 1)
+# 3. Main Simulation Function 
 ###########################################
 simulate_dograce <- function(n_sims,
                              race_length = 1000,
