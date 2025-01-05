@@ -1,0 +1,852 @@
+---
+title: "Simulating Majora's Mask Dog Race Minigame"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Simulating Majora's Mask Dog Race Minigame}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+<style>
+body {
+  text-align: justify;
+}
+</style>
+
+<!-- badges: start -->
+<img src="https://raw.githubusercontent.com/AlanInglis/Majoras_Mask_Blue_Dog/refs/heads/main/badges/mm_heart.jpeg" width="241" height="209" align="right" />
+<!-- badges: end -->
+
+# Introduction
+
+This vignette demonstrates a **replication of the Majora’s Mask Dog Race** minigame mechanics in R. Our work is inspired by a Vidya James YouTube video [Why Majora's Mask's Blue Dog Took 25 Years to Win the Race](https://www.youtube.com/watch?v=Y1l6Xj4PLEk), which discusses how the race functions in-game, and the information available from the **original C source code** hosted on the Majora's Mask [zeldaret](https://github.com/zeldaret/mm) GitHub repository. The primary objective is to **estimate** each dog’s likelihood of winning by running a large number of **Monte Carlo** (random) simulations under the same rules used by the game.
+
+If you are not interested in the code and want to skip directly to the results, see Section 5.
+
+---
+
+# Background: The Dog Race in Majora’s Mask
+
+In **The Legend of Zelda: Majora’s Mask**, there is a dog-racing minigame at Romani Ranch. The player bets on one dog out of 14, then watches them race around a track. Several mechanics are defined in the source code:
+
+1. **Base Speeds Vary by Colour**  
+   The game’s code specifies different speeds for “White,” “Grey,” “Beige,” “Brown,” “Blue,” and “Gold” dogs, with a special “Default/Beige” case (which can essentially be ignored). These speeds can change during the race.
+
+2. **Global Condition**  
+   Each dog can be in “good” (faster by +20%), “neutral” (no change), or “bad” (slower by -20%) condition, assigned randomly. This further affects their performance.
+
+3. **Sprint Mechanics**  
+   Once the dog in first place crosses the 3/4 mark, a global sprint timer begins. Dogs that are not in bad condition get a speed multiplier that can reach up to 2.0 by the end of the race.
+
+4. **Observing the Blue Dog**  
+   Many players believe the **Blue dog never wins**, because while the Blue dog starts with a high speed for the first quarter, it can perform poorly afterwards. We aim to verify this empirically by simulating many races and examining the results.
+
+---
+
+# Statistical (Monte Carlo) Approach
+
+We replicate these mechanics using **Monte Carlo** random sampling and a **time-step simulation**:
+
+- **Data Definition**: We record each dog’s colour, condition, speeds, and the point at which they switch speeds.  
+- **Custom RNG**: Majora’s Mask uses a Linear Congruential Generator (LCG) for random floats, i.e., it updates a 32-bit integer state and converts it to a float in \([-0.5, +0.5]\).  
+- **Simulation**: Each dog’s position is tracked over time, and once all dogs finish, we see which one came in first.
+
+Because we repeat this procedure \(\text{n\_sims}\) times, the fraction of races in which a specific dog finishes first becomes that dog’s **empirical winning rate**. While we often call it “probability” for simplicity, it is actually the **empirical estimate** of the dog’s chance to win under the same rules, seeds, and assumptions.
+
+From the original game code, here is the snippet for the random function:
+
+```{r, eval=F}
+f32 Rand_Centered(void) {
+    sRandInt = (sRandInt * RAND_MULTIPLIER) + RAND_INCREMENT;
+    gRandFloat.i = ((sRandInt >> 9) | 0x3F800000);
+    return gRandFloat.f - 1.5f;
+}
+```
+
+This produces floats in \([-0.5, 0.5]\). We replicate it in R by storing a seed, multiplying by the same constants, taking the result mod \(2^{32}\), and shifting the float.
+
+---
+
+# 1. Data Frames and Constants
+
+We start by defining the dog speeds (`sBaseSpeeds`), the 14 dog colours (`dog_colours`), and the condition distribution (4 good, 5 neutral, 5 bad). We also store a small table, shown below, for reference:
+
+| Colour Index | Colour Name | First Speed | Second Speed |
+|-------------:|:-----------|------------:|-------------:|
+| 0            | Default    | 0.0         | 0.0          |
+| 1            | White      | 5.0         | 5.5          |
+| 2            | Gray       | 5.0         | 5.0          |
+| 3            | Beige      | 5.5         | 5.0          |
+| 4            | Brown      | 4.5         | 5.5          |
+| 5            | Blue       | 6.0         | 4.0          |
+| 6            | Gold       | 4.0         | 6.0          |
+
+```{r, eval = F}
+###########################################
+# 1. Data and Constants
+###########################################
+
+# sBaseSpeeds (in R, 1-based rows):
+#   row1 => DOG_COLOR_DEFAULT(0) => {0.0, 0.0}
+#   row2 => DOG_COLOR_WHITE  (1) => {5.0, 5.5}
+#   row3 => DOG_COLOR_GRAY   (2) => {5.0, 5.0}
+#   row4 => DOG_COLOR_BEIGE  (3) => {5.5, 5.0}
+#   row5 => DOG_COLOR_BROWN  (4) => {4.5, 5.5}
+#   row6 => DOG_COLOR_BLUE   (5) => {6.0, 4.0}
+#   row7 => DOG_COLOR_GOLD   (6) => {4.0, 6.0}
+sBaseSpeeds <- matrix(
+  c(
+    0.0, 0.0,   # row1 => Default
+    5.0, 5.5,   # row2 => White
+    5.0, 5.0,   # row3 => Gray
+    5.5, 5.0,   # row4 => Beige
+    4.5, 5.5,   # row5 => Brown
+    6.0, 4.0,   # row6 => Blue
+    4.0, 6.0    # row7 => Gold
+  ),
+  ncol = 2, byrow = TRUE
+)
+
+# The 14 dogs' colours, from sDogInfo in the game:
+  #  dog 0 => 3 (Beige), dog 1 => 1 (White), dog 2 => 5 (Blue), dog 3 => 2 (Gray),
+  #  dog 4 => 4 (Brown), dog 5 => 2 (Gray), dog 6 => 3 (Beige), dog 7 => 1 (White),
+  #  dog 8 => 1 (White), dog 9 => 6 (Gold), dog 10 => 2 (Gray), dog 11 => 3 (Beige),
+  #  dog 12 => 1 (White), dog 13 => 4 (Brown)
+  dog_colours <- c(3,1,5,2,4,2,3,1,1,6,2,3,1,4)
+  n_dogs      <- length(dog_colours)  # 14
+  
+  # Condition distribution: 4 good, 5 neutral, 5 bad
+  dog_condition_types <- c(rep("good",4), rep("neutral",5), rep("bad",5))
+  
+  # from sDogInfo: the distance point to use second base speed
+  #  in the game, these are path indices 8..10, but we map them
+  #  to (index/12)*race_length in the code
+  pt_to_use_2nd <- c(9,9,10,9,8,9,9,9,9,8,9,9,9,8)
+  
+  # Full colour labels (0..6 => 7 total). We'll exclude "Default" from final outputs.
+  color_labels <- c("Default","White","Gray","Beige","Brown","Blue","Gold")
+  
+  
+  ###########################################
+  # 1a. Build dog_labels for finishing matrix
+  ###########################################
+  # Each dog gets a label like "beige_1", "white_1", "gray_1", etc.
+  build_dog_labels <- function(dog_colours, color_labels) {
+    color_counts <- setNames(as.list(rep(0L, length(color_labels))), color_labels)
+    labels_out   <- character(length(dog_colours))
+    
+    for (i in seq_along(dog_colours)) {
+      c_enum  <- dog_colours[i]
+      # note +1 to handle R's 1-based row indexing
+      c_label <- color_labels[c_enum + 1]
+      color_counts[[c_label]] <- color_counts[[c_label]] + 1
+      # e.g. "beige_1", "white_2", "blue_1", etc.
+      labels_out[i] <- paste0(tolower(c_label), "_", color_counts[[c_label]])
+    }
+    labels_out
+  }
+  
+  dog_labels <- build_dog_labels(dog_colours, color_labels)
+  
+  # Condition multiplier function
+  # Good => ×1.2, Bad => ÷1.2, Neutral => ×1.0
+  condition_multiplier <- function(cond) {
+    if (cond == "good") return(1.2)
+    if (cond == "bad")  return(1/1.2)
+    1.0
+  }
+```
+
+---
+
+# 2. Custom RNG
+
+We use a **double-precision** LCG to avoid integer overflow in R, but otherwise mirror the game code’s approach to generating random floats:
+
+```{r, eval = F}
+  ###########################################
+  # 2. RNG (LCG) Implementation in R
+  ###########################################
+  # We store the seed as a double in [0, 2^32)
+  # to avoid integer overflow in 32-bit multiplication.
+  
+  RNGenv <- new.env()
+  RNGenv$seed <- 0.0  # user can set, e.g. RNGenv$seed <- 1234.0
+  
+  rand_centered_float <- function(range = 1.0) {
+    # The constants 1664525 and 1013904223 are from the original code
+    RNGenv$seed <- (RNGenv$seed * 1664525 + 1013904223) %% 4294967296
+    # convert [0,1) => [-0.5,0.5] => scale by 'range'
+    ((RNGenv$seed / 4294967296) - 0.5) * range
+  }
+```
+
+---
+
+# 3. The Simulation Function
+
+Our function `simulate_dograce` (see below) performs the following:
+
+1. Randomly assigns conditions to each dog.  
+2. Sets each dog’s initial speed (Blue gets a special speed for the first quarter).  
+3. Iterates over time, updating speeds if the dog in first crosses 3/4, applying condition multipliers, etc.  
+4. Once all dogs finish, records their final ranks.  
+5. Repeats for \(\text{n\_sims}\) runs, so we can **count** how many times each dog finishes first.
+
+```{r, eval = F}
+  ###########################################
+  # 3. Main Simulation Function 
+  ###########################################
+  simulate_dograce <- function(n_sims,
+                               race_length = 1000,
+                               selected_dog = 1,  # can be numeric or a string label
+                               show_progress = TRUE) {
+    # 3.1. Convert selected_dog to numeric if string
+    if (is.character(selected_dog)) {
+      dog_index <- match(selected_dog, dog_labels)
+      if (is.na(dog_index)) {
+        stop("Error: 'selected_dog' label not found in dog_labels. Provided: ", selected_dog)
+      }
+      selected_dog <- dog_index
+    } else if (!is.numeric(selected_dog)) {
+      stop("selected_dog must be numeric or character.")
+    }
+    
+    # Safety: ensure the numeric index is in 1..n_dogs
+    if (selected_dog < 1 || selected_dog > n_dogs) {
+      stop("selected_dog numeric index out of range (1..", n_dogs, ").")
+    }
+    
+    finish_matrix  <- matrix(0, nrow = n_sims, ncol = n_dogs)
+    winners        <- integer(n_sims)
+    winner_colours <- integer(n_sims)
+    
+    # Optionally create a progress bar
+    if (show_progress) {
+      pb <- txtProgressBar(min = 0, max = n_sims, style = 3)
+    }
+    
+    ###########################################
+    # Function to simulate one race
+    ###########################################
+    simulate_one_race <- function() {
+      # randomly assign 4 good, 5 neutral, 5 bad
+      assigned_conds <- sample(dog_condition_types, n_dogs, replace = FALSE)
+      
+      # Build dog_data for all 14 dogs
+      dog_data <- lapply(seq_len(n_dogs), function(i) {
+        list(
+          colour       = dog_colours[i],
+          condition    = assigned_conds[i],
+          dist_for_2nd = (pt_to_use_2nd[i] / 12) * race_length,
+          sprint_mult  = NA_real_,
+          finished     = FALSE,
+          finish_rank  = NA_integer_,
+          position     = 0.0,
+          speed        = 0.0
+        )
+      })
+      
+      # sSprintTimer increments once the first-place dog passes 3/4
+      sSprintTimer      <- 0
+      quarter_len       <- 0.25 * race_length
+      three_quarter_len <- 0.75 * race_length
+      
+      # At race start, if dog is Blue(enum=5), use sBaseSpeeds[6,1]=6.0
+      # Others => 5.0
+      for (k in seq_len(n_dogs)) {
+        col <- dog_data[[k]]$colour
+        if (col == 5) {
+          dog_data[[k]]$speed <- sBaseSpeeds[col + 1, 1]  # row6 => 6.0
+        } else {
+          dog_data[[k]]$speed <- 5.0
+        }
+      }
+      
+      get_first_place <- function(dd) which.max(vapply(dd, `[[`, numeric(1), "position"))
+      
+      ###########################################
+      # Speed update logic each step
+      ###########################################
+      update_speeds <- function(dd, sprint_time) {
+        idx_first <- get_first_place(dd)
+        for (k in seq_along(dd)) {
+          dpos <- dd[[k]]$position
+          col  <- dd[[k]]$colour
+          cond <- dd[[k]]$condition
+          
+          base_spd <- 0.0
+          if (dpos < quarter_len) {
+            # first quarter
+            if (col == 5) {
+              base_spd <- sBaseSpeeds[col + 1, 1] + rand_centered_float(1.0)
+            } else {
+              base_spd <- 5.0 + rand_centered_float(1.0)
+            }
+            
+          } else if (dpos < three_quarter_len) {
+            # from 1/4 to 3/4
+            if (dpos >= dd[[k]]$dist_for_2nd) {
+              base_spd <- sBaseSpeeds[col + 1, 2] + rand_centered_float(1.0)
+            } else {
+              base_spd <- 5.0 + rand_centered_float(1.0)
+            }
+            
+          } else {
+            # final 1/4
+            # if sprint_mult not set, do it now (unless bad)
+            if (is.na(dd[[k]]$sprint_mult)) {
+              if (cond == "bad") {
+                dd[[k]]$sprint_mult <- 1.0
+              } else {
+                # 2.0 max if sSprintTimer >=100
+                if (sprint_time < 100) {
+                  dd[[k]]$sprint_mult <- 200.0 / (200.0 - sprint_time)
+                } else {
+                  dd[[k]]$sprint_mult <- 2.0
+                }
+              }
+            }
+            base_spd <- sBaseSpeeds[col + 1, 2] + rand_centered_float(1.0)
+            base_spd <- base_spd * dd[[k]]$sprint_mult
+          }
+          
+          # Apply condition multiplier
+          base_spd <- base_spd * condition_multiplier(cond)
+          
+          # The selected dog has a cap of 7.5, others 7.0
+          max_spd <- if (k == selected_dog) 7.5 else 7.0
+          base_spd <- min(base_spd, max_spd)
+          
+          dd[[k]]$speed <- base_spd
+        }
+        dd
+      }
+      
+      # Step until all 14 dogs finish
+      rank_counter <- 0
+      while (rank_counter < n_dogs) {
+        idx_first <- get_first_place(dog_data)
+        
+        # increment sSprintTimer once first-place dog crosses 3/4
+        if (!dog_data[[idx_first]]$finished &&
+            dog_data[[idx_first]]$position >= three_quarter_len) {
+          sSprintTimer <- sSprintTimer + 1
+        }
+        
+        # update speeds
+        dog_data <- update_speeds(dog_data, sSprintTimer)
+        
+        # move dogs
+        for (k in seq_along(dog_data)) {
+          if (!dog_data[[k]]$finished) {
+            dog_data[[k]]$position <- dog_data[[k]]$position + dog_data[[k]]$speed
+            if (dog_data[[k]]$position >= race_length) {
+              dog_data[[k]]$finished <- TRUE
+              rank_counter <- rank_counter + 1
+              dog_data[[k]]$finish_rank <- rank_counter
+            }
+          }
+        }
+      }
+      
+      dog_data
+    }
+    
+    ###########################################
+    # 3.2. Run all simulations
+    ###########################################
+    for (sim_id in seq_len(n_sims)) {
+      race_result <- simulate_one_race()
+      
+      # record finishing ranks
+      for (j in seq_len(n_dogs)) {
+        finish_matrix[sim_id, j] <- race_result[[j]]$finish_rank
+      }
+      
+      # find the winner (rank=1)
+      dog_winner <- which.min(vapply(race_result, `[[`, numeric(1), "finish_rank"))
+      winners[sim_id]        <- dog_winner
+      winner_colours[sim_id] <- race_result[[dog_winner]]$colour
+      
+      # update progress bar if desired
+      if (show_progress) {
+        setTxtProgressBar(pb, sim_id)
+      }
+    }
+    
+    if (show_progress) {
+      close(pb)
+    }
+    
+    ###########################################
+    # 4. Summarise results
+    ###########################################
+    dog_win_counts   <- tabulate(winners, nbins = n_dogs)
+    dog_win_probs    <- dog_win_counts / n_sims
+    
+    # colour is 0..6 => shift by +1 for R indexing
+    col_win_counts <- tabulate(winner_colours + 1, nbins = length(color_labels))
+    col_win_probs  <- col_win_counts / n_sims
+    
+    mean_finish_positions <- colMeans(finish_matrix)
+    
+    # Remove "Default" from final colour results
+    col_win_probs_no_def    <- col_win_probs[-1]
+    color_labels_no_default <- color_labels[-1]
+    
+    # Races for 99.99% chance => (1 - p)^N <= 0.0001 => N >= log(0.0001)/log(1 - p)
+    races_for_99_99 <- sapply(col_win_probs_no_def, function(p) {
+      if (p <= 0) return(Inf)
+      ceiling(log(0.0001) / log(1 - p))
+    })
+    
+    # Name dog-based results with dog_labels
+    dog_win_prob_named <- setNames(dog_win_probs, dog_labels)
+    colnames(finish_matrix) <- dog_labels
+    mean_finish_positions_named  <- setNames(mean_finish_positions, dog_labels)
+    
+    # Name colour-based results (excluding "Default")
+    colour_win_probability_named <- setNames(col_win_probs_no_def, color_labels_no_default)
+    races_for_99_99_named        <- setNames(races_for_99_99,      color_labels_no_default)
+    
+    ###########################################
+    # Final output
+    ###########################################
+    list(
+      dog_win_probability        = sort(dog_win_prob_named, decreasing = T),
+      colour_win_probability     = sort(colour_win_probability_named, decreasing = T),
+      mean_finish_position       = sort(mean_finish_positions_named, decreasing = F),
+      races_for_99_99_per_colour = races_for_99_99_named,
+      finish_positions_all       = finish_matrix
+    )
+  }
+  
+```
+
+### Calculating “Probabilities”
+
+After running \(\text{n\_sims}\) races, we simply tally **how often** each dog finishes in first place, then divide by \(\text{n\_sims}\). This yields an **empirical** or **Monte Carlo** approximation of that dog’s winning chance:
+
+\[
+\hat{p}_i \;=\; \frac{\text{(number of times dog $i$ won)}}{\text{n\_sims}}.
+\]
+
+As \(\text{n\_sims}\) grows large, \(\hat{p}_i\) converges to the dog’s true probability of winning under these rules.
+
+### Computing the 99.99% “Guarantee”
+
+We also calculate the number of races needed for a **99.99% chance** of at least one victory for each colour. If the colour’s empirical winning rate is \(p\), then the probability it fails to win in \(N\) races is \((1 - p)^N\). For a 99.99% success chance:
+
+\[
+(1 - p)^N \; \le \; 0.0001
+\quad\Longrightarrow\quad
+N \;\ge\; \frac{\ln(0.0001)}{\ln(1 - p)}.
+\]
+
+In the simulation’s output list, we apply this to each colour’s \(\hat{p}\).
+
+---
+
+# 4. Running the Simulation
+
+Below is an example of running 100,000 races where **Gold** is selected, then another 100,000 with **Blue** selected. (We keep the code in one chunk for clarity.)
+
+```{r, eval = F}
+  # Run simulation with gold dog selected by player
+  set.seed(1701)        # controls R's default RNG for sample()
+  RNGenv$seed <- 1701.0  # RNG function seed
+  results_gold <- simulate_dograce(n_sims = 100000, race_length = 1000, selected_dog = 'gold_1', show_progress = TRUE)
+  results_gold$dog_win_probability
+  results_gold$colour_win_probability
+  results_gold$mean_finish_position
+  results_gold$races_for_99_99_per_colour
+  head(results_gold$finish_positions_all)
+  
+  # Run simulation with blue dog selected by player
+  set.seed(1701)        # controls R's default RNG for sample()
+  RNGenv$seed <- 1701.0  # RNG function seed
+  results_blue <- simulate_dograce(n_sims = 100000, race_length = 1000, selected_dog = 'blue_1', show_progress = TRUE)
+  results_blue$dog_win_probability
+  results_blue$colour_win_probability
+  results_blue$mean_finish_position
+  results_blue$races_for_99_99_per_colour
+  head(results_blue$finish_positions_all)
+```
+
+---
+
+# 5. Results and Visualisations
+
+## 5.1 Gold Dog Selected
+
+When we select the Gold dog, we see in Figure 1 below that “gold_1” has an **empirical winning rate** of around 28%, while “blue_1” may have 0%, indicating that across 100,000 trials, Blue did not win once in this scenario.
+
+```{r, eval = F}
+  library(ggplot2)
+  
+  # set up colours for plot
+  dog_color_map <- c(
+    "BEIGE" = "beige",
+    "WHITE" = "white",
+    "BLUE"  = "darkslateblue",
+    "GOLD"  = "gold2",
+    "BROWN" = "brown",
+    "GRAY"  = "gray40"
+  )
+  
+  # Helper function: extract the uppercase colour name
+  # from a dog label such as "beige_1", "white_2", etc.
+  extract_colour_name <- function(dog_label) {
+    # 1) remove anything after the underscore => "beige"
+    # 2) convert to uppercase => "BEIGE"
+    # e.g. "beige_1" => "BEIGE"
+    toupper(sub("_.*", "", dog_label))
+  }
+  
+  df_dogs <- data.frame(
+    Dog     = names(results_gold$dog_win_probability),
+    WinProb = as.numeric(results_gold$dog_win_probability)
+  )
+  
+  # Create a new column "ColourName" for the dog's actual colour
+  df_dogs$ColourName <- sapply(df_dogs$Dog, extract_colour_name)
+  
+  ggplot(df_dogs, aes(x = reorder(Dog, WinProb), y = WinProb, fill = ColourName)) +
+    geom_col(show.legend = FALSE, col = 'black') +
+    coord_flip() +
+    labs(
+      title = "Probability of Each Dog Winning",
+      x = "Dog",
+      y = "Win Probability"
+    ) +
+    scale_fill_manual(values = dog_color_map) +
+    theme_bw()
+  
+```
+<center>
+```{r, out.height='30%', out.width='30%', fig.align="center"}
+  knitr::include_graphics("https://raw.githubusercontent.com/AlanInglis/colouR/master/images/bender.png")
+```
+<caption><span id="fig1:fig1">Figure 1: </span>The _"towering inferno of physical perfection"_ that is Bender.</caption>
+</center>
+
+
+### Mean Finish Positions
+
+Figure 2 shows the **mean finishing position** of each dog for the gold-selected scenario. Lower means a better average finish (i.e., they place nearer 1st more often). Gold naturally does well, with a mean finish near 5.6, while Blue might be near 9.4, reflecting its struggle to maintain speed in later segments.
+
+```{r,eval=FALSE}
+  df_meanpos <- data.frame(
+    Dog = names(results_gold$mean_finish_position),
+    MeanPos = as.numeric(results_gold$mean_finish_position)
+  )
+  
+  df_meanpos$ColourName <- sapply(df_meanpos$Dog, extract_colour_name)
+  
+  ggplot(df_meanpos, aes(x = reorder(Dog, -MeanPos), y = MeanPos, fill = ColourName)) +
+    geom_col(show.legend = FALSE, col = 'black') +
+    coord_flip() +
+    labs(
+      title = "Mean Finishing Position by Dog",
+      x = "Dog",
+      y = "Mean Position"
+    ) +
+    scale_fill_manual(values = dog_color_map) +
+    theme_bw()
+```
+<center>
+```{r, out.height='30%', out.width='30%', fig.align="center"}
+  knitr::include_graphics("https://raw.githubusercontent.com/AlanInglis/colouR/master/images/bender.png")
+```
+<caption><span id="fig1:fig1">Figure 1: </span>The _"towering inferno of physical perfection"_ that is Bender.</caption>
+</center>
+
+### Rank Distribution
+
+Figure 3 displays how often each dog finishes at each rank (1..14). Notice that many dogs have multi-modal distributions, reflecting the interplay of condition (good, neutral, bad) and random fluctuations.
+
+```{r, eval=FALSE}
+  finish_df <- melt(results_gold$finish_positions_all)
+  colnames(finish_df) <- c("Simulation", "Dog", "FinishRank")
+  
+  # Extract the dog's actual colour
+  finish_df$ColourName <- sapply(finish_df$Dog, extract_colour_name)
+  
+  ggplot(finish_df, aes(x = FinishRank, fill = ColourName)) +
+    geom_density(alpha = 0.4, show.legend = FALSE) +
+    facet_wrap(~ Dog) +
+    labs(
+      x = "Finishing Rank",
+      y = "Density"
+    ) +
+    scale_fill_manual(values = dog_color_map) +
+    theme_bw()
+```
+
+<center>
+```{r, out.height='30%', out.width='30%', fig.align="center"}
+  knitr::include_graphics("https://raw.githubusercontent.com/AlanInglis/colouR/master/images/bender.png")
+```
+<caption><span id="fig1:fig1">Figure 1: </span>The _"towering inferno of physical perfection"_ that is Bender.</caption>
+</center>
+
+## 5.2 Blue Dog Selected
+
+Running the same 100,000 races but selecting the Blue dog changes the results only slightly. In Figure 4, we again see Gold near 28% and Blue near 0%. This suggests that Blue struggles, even with the slight speed-cap boost for being “selected.”
+
+```{r, eval = F}
+  library(ggplot2)
+  
+  # set up colours for plot
+  dog_color_map <- c(
+    "BEIGE" = "beige",
+    "WHITE" = "white",
+    "BLUE"  = "darkslateblue",
+    "GOLD"  = "gold2",
+    "BROWN" = "brown",
+    "GRAY"  = "gray40"
+  )
+  
+  # Helper function: extract the uppercase colour name
+  # from a dog label such as "beige_1", "white_2", etc.
+  extract_colour_name <- function(dog_label) {
+    # 1) remove anything after the underscore => "beige"
+    # 2) convert to uppercase => "BEIGE"
+    # e.g. "beige_1" => "BEIGE"
+    toupper(sub("_.*", "", dog_label))
+  }
+  
+  df_dogs <- data.frame(
+    Dog     = names(results_blue$dog_win_probability),
+    WinProb = as.numeric(results_blue$dog_win_probability)
+  )
+  
+  # Create a new column "ColourName" for the dog's actual colour
+  df_dogs$ColourName <- sapply(df_dogs$Dog, extract_colour_name)
+  
+  ggplot(df_dogs, aes(x = reorder(Dog, WinProb), y = WinProb, fill = ColourName)) +
+    geom_col(show.legend = FALSE, col = 'black') +
+    coord_flip() +
+    labs(
+      title = "Probability of Each Dog Winning",
+      x = "Dog",
+      y = "Win Probability"
+    ) +
+    scale_fill_manual(values = dog_color_map) +
+    theme_bw()
+  
+```
+
+<center>
+```{r, out.height='30%', out.width='30%', fig.align="center"}
+  knitr::include_graphics("https://raw.githubusercontent.com/AlanInglis/colouR/master/images/bender.png")
+```
+<caption><span id="fig1:fig1">Figure 1: </span>The _"towering inferno of physical perfection"_ that is Bender.</caption>
+</center>
+
+### Mean Finish Positions (Blue-Selected)
+
+In Figure 5, we see the average finishing rank again: Gold is around 5.65, Blue near 9.35. Over many simulations, Blue’s early speed advantage does not compensate for its later slowdown.
+
+```{r,eval=FALSE}
+  df_meanpos <- data.frame(
+    Dog = names(results_blue$mean_finish_position),
+    MeanPos = as.numeric(results_blue$mean_finish_position)
+  )
+  
+  df_meanpos$ColourName <- sapply(df_meanpos$Dog, extract_colour_name)
+  
+  ggplot(df_meanpos, aes(x = reorder(Dog, -MeanPos), y = MeanPos, fill = ColourName)) +
+    geom_col(show.legend = FALSE, col = 'black') +
+    coord_flip() +
+    labs(
+      title = "Mean Finishing Position by Dog",
+      x = "Dog",
+      y = "Mean Position"
+    ) +
+    scale_fill_manual(values = dog_color_map) +
+    theme_bw()
+```
+
+<center>
+```{r, out.height='30%', out.width='30%', fig.align="center"}
+  knitr::include_graphics("https://raw.githubusercontent.com/AlanInglis/colouR/master/images/bender.png")
+```
+<caption><span id="fig1:fig1">Figure 1: </span>The _"towering inferno of physical perfection"_ that is Bender.</caption>
+</center>
+
+### Rank Distribution (Blue-Selected)
+
+Figure 6 shows the rank density plots again, still with multi-modal patterns for each dog.
+
+```{r, eval=FALSE}
+  finish_df <- melt(results_blue$finish_positions_all)
+  colnames(finish_df) <- c("Simulation", "Dog", "FinishRank")
+  
+  # Extract the dog's actual colour
+  finish_df$ColourName <- sapply(finish_df$Dog, extract_colour_name)
+  
+  ggplot(finish_df, aes(x = FinishRank, fill = ColourName)) +
+    geom_density(alpha = 0.4, show.legend = FALSE) +
+    facet_wrap(~ Dog) +
+    labs(
+      x = "Finishing Rank",
+      y = "Density"
+    ) +
+    scale_fill_manual(values = dog_color_map) +
+    theme_bw()
+```
+
+<center>
+```{r, out.height='30%', out.width='30%', fig.align="center"}
+  knitr::include_graphics("https://raw.githubusercontent.com/AlanInglis/colouR/master/images/bender.png")
+```
+<caption><span id="fig1:fig1">Figure 1: </span>The _"towering inferno of physical perfection"_ that is Bender.</caption>
+</center>
+
+## Gold and Blue Dog Comparisons
+
+Figure 7 compares each dog’s **winning rate** side by side for the “Gold selected” vs. “Blue selected” scenarios, revealing that the difference for most dogs is minimal.
+
+```{r, eval = F}
+  # 1) Read in saved results
+  results_blue <- readRDS("results_blue_selected.rds")
+  results_gold <- readRDS("results_gold_selected.rds")
+  
+  # 2) Extract each dog's win probabilities as data frames
+  df_blue <- data.frame(
+    Dog     = names(results_blue$dog_win_probability),
+    WinProb = as.numeric(results_blue$dog_win_probability),
+    Scenario = "Blue Selected"
+  )
+  
+  df_gold <- data.frame(
+    Dog     = names(results_gold$dog_win_probability),
+    WinProb = as.numeric(results_gold$dog_win_probability),
+    Scenario = "Gold Selected"
+  )
+  
+  # 3) Combine them
+  df_combined <- rbind(df_blue, df_gold)
+  
+  
+  ggplot(df_combined, aes(x = Dog, y = WinProb, fill = Scenario)) +
+    geom_col(position = position_dodge(width = 0.5)) +
+    scale_fill_manual(values = c("Blue Selected" = "darkslateblue",
+                                 "Gold Selected" = "gold3")) +
+    labs(
+      title = "Comparing Dog Winning Probabilities",
+      x = "Dog",
+      y = "Probability of Winning",
+      fill = "Scenario"
+    ) +
+    scale_y_continuous(labels = scales::percent_format(accuracy = 0.1)) +
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+<center>
+```{r, out.height='30%', out.width='30%', fig.align="center"}
+  knitr::include_graphics("https://raw.githubusercontent.com/AlanInglis/colouR/master/images/bender.png")
+```
+<caption><span id="fig1:fig1">Figure 1: </span>The _"towering inferno of physical perfection"_ that is Bender.</caption>
+</center>
+
+### Differences in Probabilities
+
+Figure 8 plots the **difference** in each dog’s winning rate between “Gold selected” and “Blue selected” simulations:
+
+```{r, eval = F}
+  df_diff <- merge(df_blue, df_gold, by = "Dog", suffixes = c("_Blue", "_Gold"))
+  df_diff$WinProbDifference <- df_diff$WinProb_Gold - df_diff$WinProb_Blue
+  
+  # Create a 'Sign' variable for positive/negative
+  df_diff$Sign <- ifelse(df_diff$WinProbDifference >= 0, "Positive", "Negative")
+  
+  ggplot(df_diff, aes(x = Dog, y = WinProbDifference, fill = Sign)) +
+    geom_col() +
+    geom_hline(yintercept = 0, colour = "black") +
+    labs(
+      title = "Difference in Win Probability (GoldSelected - BlueSelected)",
+      x = "Dog",
+      y = "Difference in Probability"
+    ) +
+    scale_fill_manual(values = c("Positive" = "green", "Negative" = "red")) +
+    scale_y_continuous(labels = scales::percent_format(accuracy = 0.1)) +
+    theme_bw() +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "none"
+```
+
+<center>
+```{r, out.height='30%', out.width='30%', fig.align="center"}
+  knitr::include_graphics("https://raw.githubusercontent.com/AlanInglis/colouR/master/images/bender.png")
+```
+<caption><span id="fig1:fig1">Figure 1: </span>The _"towering inferno of physical perfection"_ that is Bender.</caption>
+</center>
+
+### Comparison Table
+
+Below we compare each dog’s **mean finishing position** and **empirical winning rate** for the Gold-selected and Blue-selected scenarios, using the values you supplied.
+
+#### Table 1: Mean Finish Positions Comparison
+| Dog     | Gold Strategy | Blue Strategy |
+|---------|--------------|---------------|
+| gold_1  | 5.64         | 5.65         |
+| brown_1 | 6.09         | 6.11         |
+| brown_2 | 6.34         | 6.36         |
+| white_1 | 6.64         | 6.67         |
+| white_2 | 6.80         | 6.80         |
+| white_3 | 6.93         | 6.90         |
+| white_4 | 7.02         | 6.99         |
+| beige_1 | 8.10         | 8.12         |
+| gray_1  | 8.20         | 8.20         |
+| gray_2  | 8.33         | 8.31         |
+| beige_2 | 8.42         | 8.41         |
+| gray_3  | 8.51         | 8.50         |
+| beige_3 | 8.60         | 8.63         |
+| blue_1  | 9.37         | 9.35         |
+
+####  Table 2: Win Probabilities (Gold Strategy)
+| Dog     | Win Probability |
+|---------|----------------|
+| gold_1  | 28.42%         |
+| brown_1 | 18.75%         |
+| brown_2 | 13.95%         |
+| white_1 | 11.56%         |
+| white_2 | 9.18%          |
+| white_3 | 7.89%          |
+| white_4 | 6.69%          |
+| beige_1 | 1.00%          |
+| gray_1  | 0.84%          |
+| gray_2  | 0.60%          |
+| beige_2 | 0.48%          |
+| gray_3  | 0.37%          |
+| beige_3 | 0.29%          |
+| blue_1  | 0.00%          |
+
+####  Table 3: Races Required for 99.99% Confidence
+| Color | Gold Strategy | Blue Strategy |
+|-------|--------------|---------------|
+| White | 22           | 22            |
+| Gray  | 505          | 540           |
+| Beige | 517          | 530           |
+| Brown | 24           | 24            |
+| Blue  | Inf          | Inf           |
+| Gold  | 28           | 28            |
+
+
+# Conclusion
+
+Without relying on any glitches, it is impossible for the Blue dog to ever win a race. In Contrast to XXXX's video, these simulations never showed Blue dog achieving 1st, 2nd, or even 3rd! However, Blue dog did come 4th 28,570 times. This contrast between the simulation and the results shown in the XXXX video are most likely due to several assumptions and shortcuts that had to be taken to 'accuratley' simulate this in R. For example, in the simulation, it is assumed that the track is a straight line. Whereas, in the game, the track is curved and other related factors affect the win rates (such as a random speed fluctuation depending on the angle of the dog on the track that is present in the real game). Despite the coding differences, the results show what we have always already known - gold dog wins a lot and blue dog never wins!!! 
+
+
+
+
+
+
+
+
+
