@@ -19,7 +19,7 @@ body {
 
 # Introduction
 
-This vignette demonstrates a **replication of the Majora’s Mask Dog Race** minigame mechanics in R. Our work is inspired by a Vidya James YouTube video [Why Majora's Mask's Blue Dog Took 25 Years to Win the Race](https://www.youtube.com/watch?v=Y1l6Xj4PLEk), which discusses how the race functions in-game, and the information available from the **original C source code** hosted on the Majora's Mask [zeldaret](https://github.com/zeldaret/mm) GitHub repository. The primary objective is to **estimate** each dog’s likelihood of winning by running a large number of **Monte Carlo** (random) simulations under the same rules used by the game.
+This vignette demonstrates a **replication of the Majora’s Mask Dog Race** minigame mechanics in R. Our work is inspired by a Vidya James YouTube video [Why Majora's Mask's Blue Dog Took 25 Years to Win the Race](https://www.youtube.com/watch?v=Y1l6Xj4PLEk), which discusses how the race functions in-game, and the information available from the **original C source code** hosted on the Majora's Mask [zeldaret](https://github.com/zeldaret/mm) GitHub repository. The primary objective is to **estimate** each dog’s likelihood of winning by running a large number of **Monte Carlo** (random) simulations under the same rules used by the game. The main difference between Vidya James' video and this analysis, is here we are examining if Blue dog can ever win, without relying on any glitches. 
 
 If you are not interested in the code and want to skip directly to the results, see Section 5.
 
