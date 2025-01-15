@@ -13,7 +13,7 @@ The simulation accounts for individual dog characteristics, race conditions,
 and randomised speed variations, all contributing to a realistic and probabilistic outcome. 
 The **original C source code** is hosted on the Marjoa's Mask [zeldaret](https://github.com/zeldaret/mm) GitHub repo.
 
-For a vignette of the main simulation function and the results, see XXXXXX
+For a vignette of the main simulation function and the results, see the report found [here](https://alaninglis.github.io/Majoras_Mask_Blue_Dog).
 
 
 
