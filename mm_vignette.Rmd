@@ -13,19 +13,39 @@ body {
 }
 </style>
 
+<style>
+.spoiler {
+  color: transparent;
+  background-color: black;
+  cursor: pointer;
+}
+.spoiler:hover {
+  color: inherit;
+  background-color: inherit;
+}
+</style>
+
 <!-- badges: start -->
 <img src="https://raw.githubusercontent.com/AlanInglis/Majoras_Mask_Blue_Dog/refs/heads/main/badges/mm_heart.jpeg" width="241" height="209" align="right" />
 <!-- badges: end -->
 
+
+
 # Introduction
 
-This vignette demonstrates a **replication of the Majora’s Mask Dog Race** minigame mechanics in R. Our work is inspired by a Vidya James YouTube video [Why Majora's Mask's Blue Dog Took 25 Years to Win the Race](https://www.youtube.com/watch?v=Y1l6Xj4PLEk), which discusses how the race functions in-game, and the information available from the **original C source code** hosted on the Majora's Mask [zeldaret](https://github.com/zeldaret/mm) GitHub repository. The primary objective is to **estimate** each dog’s likelihood of winning by running a large number of **Monte Carlo** (random) simulations under the same rules used by the game. The main difference between Vidya James' video and this analysis, is here we are examining if Blue dog can ever win, without relying on any glitches. 
+This vignette demonstrates a **replication of the Majora’s Mask Dog Race** minigame mechanics in R. This work is inspired by a Vidya James YouTube video [Why Majora's Mask's Blue Dog Took 25 Years to Win the Race](https://www.youtube.com/watch?v=Y1l6Xj4PLEk), which discusses how the race functions in-game, and the information available from the **original C source code** hosted on the Majora's Mask [zeldaret](https://github.com/zeldaret/mm) GitHub repository. The primary objective is to **estimate** each dog’s likelihood of winning by running a large number of **Monte Carlo** (random) simulations under the same rules used by the game. The main difference between Vidya James' video and this analysis, is here we are examining if Blue dog can ever win, without relying on any glitches. 
 
-If you are not interested in the code and want to skip directly to the results, see Section 5.
+It is worth noting that this project was undertaken for fun. While I aimed to make it as robust as possible, there are likely mistakes and oversights. Specifically, since this involved coding in R, my conversion from C to R may not be the most efficient.
+
+If you are not interested in the code and want to skip directly to the results, see Section 5. Spoiler: <span class="spoiler">Blue dog never wins! :(</span>
+
+
 
 ---
 
 # Background: The Dog Race in Majora’s Mask
+
+<img src="https://raw.githubusercontent.com/AlanInglis/Majoras_Mask_Blue_Dog/refs/heads/main/badges/dog_colours.png" width="241" height="209" align="right" />
 
 In **The Legend of Zelda: Majora’s Mask**, there is a dog-racing minigame at Romani Ranch. The player bets on one dog out of 14, then watches them race around a track. Several mechanics are defined in the source code:
 
@@ -39,19 +59,19 @@ In **The Legend of Zelda: Majora’s Mask**, there is a dog-racing minigame at R
    Once the dog in first place crosses the 3/4 mark, a global sprint timer begins. Dogs that are not in bad condition get a speed multiplier that can reach up to 2.0 by the end of the race.
 
 4. **Observing the Blue Dog**  
-   Many players believe the **Blue dog never wins**, because while the Blue dog starts with a high speed for the first quarter, it can perform poorly afterwards. We aim to verify this empirically by simulating many races and examining the results.
+   Many players believe the **Blue dog never wins**, because while the Blue dog starts with a high speed for the first quarter, it can perform poorly afterwards. This experiment aims to verify this empirically by simulating many races and examining the results.
 
 ---
 
 # Statistical (Monte Carlo) Approach
 
-We replicate these mechanics using **Monte Carlo** random sampling and a **time-step simulation**:
+We replicate the mechanics of the race using **Monte Carlo** random sampling and a **time-step simulation**:
 
 - **Data Definition**: We record each dog’s colour, condition, speeds, and the point at which they switch speeds.  
-- **Custom RNG**: Majora’s Mask uses a Linear Congruential Generator (LCG) for random floats, i.e., it updates a 32-bit integer state and converts it to a float in \([-0.5, +0.5]\).  
+- **Custom RNG**: Majora’s Mask uses a Linear Congruential Generator (LCG)^[L’ecuyer, Pierre. "Tables of linear congruential generators of different sizes and good lattice structure." Mathematics of Computation 68.225 (1999): 249-260.] for random floats, i.e., it updates a 32-bit integer state and converts it to a float in \([-0.5, +0.5]\).  
 - **Simulation**: Each dog’s position is tracked over time, and once all dogs finish, we see which one came in first.
 
-Because we repeat this procedure \(\text{n\_sims}\) times, the fraction of races in which a specific dog finishes first becomes that dog’s **empirical winning rate**. While we often call it “probability” for simplicity, it is actually the **empirical estimate** of the dog’s chance to win under the same rules, seeds, and assumptions.
+Because we repeat this procedure \(\text{n_sims}\) times, the fraction of races in which a specific dog finishes first becomes that dog’s **empirical winning rate**. While we often call it “probability” for simplicity, it is actually the **empirical estimate** of the dog’s chance to win under the same rules, seeds, and assumptions.
 
 From the original game code, here is the snippet for the random function:
 
@@ -69,7 +89,7 @@ This produces floats in \([-0.5, 0.5]\). We replicate it in R by storing a seed,
 
 # 1. Data Frames and Constants
 
-We start by defining the dog speeds (`sBaseSpeeds`), the 14 dog colours (`dog_colours`), and the condition distribution (4 good, 5 neutral, 5 bad). We also store a small table, shown below, for reference:
+We start by defining the dog speeds (`sBaseSpeeds`), the 14 dog colours (`dog_colours`), and the condition distribution (4 good, 5 neutral, 5 bad).A table of each colour's base speeds are shown below, for reference:
 
 | Colour Index | Colour Name | First Speed | Second Speed |
 |-------------:|:-----------|------------:|-------------:|
@@ -191,7 +211,7 @@ Our function `simulate_dograce` (see below) performs the following:
 2. Sets each dog’s initial speed (Blue gets a special speed for the first quarter).  
 3. Iterates over time, updating speeds if the dog in first crosses 3/4, applying condition multipliers, etc.  
 4. Once all dogs finish, records their final ranks.  
-5. Repeats for \(\text{n\_sims}\) runs, so we can **count** how many times each dog finishes first.
+5. Repeats for \(\text{n_sims}\) runs, so we can **count** how many times each dog finishes first.
 
 ```{r, eval = F}
   ###########################################
@@ -221,7 +241,7 @@ Our function `simulate_dograce` (see below) performs the following:
     winners        <- integer(n_sims)
     winner_colours <- integer(n_sims)
     
-    # Optionally create a progress bar
+    # create a progress bar
     if (show_progress) {
       pb <- txtProgressBar(min = 0, max = n_sims, style = 3)
     }
@@ -426,13 +446,13 @@ Our function `simulate_dograce` (see below) performs the following:
 
 ### Calculating “Probabilities”
 
-After running \(\text{n\_sims}\) races, we simply tally **how often** each dog finishes in first place, then divide by \(\text{n\_sims}\). This yields an **empirical** or **Monte Carlo** approximation of that dog’s winning chance:
+After running \(\text{n_sims}\) races, we simply tally **how often** each dog finishes in first place, then divide by \(\text{n_sims}\). This yields an **empirical** or **Monte Carlo** approximation of that dog’s winning chance:
 
 \[
 \hat{p}_i \;=\; \frac{\text{(number of times dog $i$ won)}}{\text{n\_sims}}.
 \]
 
-As \(\text{n\_sims}\) grows large, \(\hat{p}_i\) converges to the dog’s true probability of winning under these rules.
+As \(\text{n_sims}\) grows large, \(\hat{p}_i\) converges to the dog’s true probability of winning under these rules.
 
 ### Computing the 99.99% “Guarantee”
 
@@ -450,7 +470,7 @@ In the simulation’s output list, we apply this to each colour’s \(\hat{p}\).
 
 # 4. Running the Simulation
 
-Below is an example of running 100,000 races where **Gold** is selected, then another 100,000 with **Blue** selected. (We keep the code in one chunk for clarity.)
+Below is an example of running 100,000 races where **Gold** is selected, then another 100,000 with **Blue** selected. (We keep the code in one chunk for clarity.) The reasoning behind running the simulation twice with different selected dogs is it seems that there is a small speed bonus applied to the uer selected dog. 
 
 ```{r, eval = F}
   # Run simulation with gold dog selected by player
@@ -480,7 +500,7 @@ Below is an example of running 100,000 races where **Gold** is selected, then an
 
 ## 5.1 Gold Dog Selected
 
-When we select the Gold dog, we see in Figure 1 below that “gold_1” has an **empirical winning rate** of around 28%, while “blue_1” may have 0%, indicating that across 100,000 trials, Blue did not win once in this scenario.
+When we select the Gold dog, we see in Figure 1 below that “gold_1” has an **empirical winning rate** of around 28%, while “blue_1” has 0%, indicating that across 100,000 trials, Blue did not win once in this scenario.
 
 ```{r, eval = F}
   library(ggplot2)
@@ -525,16 +545,16 @@ When we select the Gold dog, we see in Figure 1 below that “gold_1” has an *
   
 ```
 <center>
-```{r, out.height='30%', out.width='30%', fig.align="center"}
-  knitr::include_graphics("https://raw.githubusercontent.com/AlanInglis/colouR/master/images/bender.png")
+```{r, out.height='100%', out.width='100%', fig.align="center", echo=FALSE}
+  knitr::include_graphics("https://raw.githubusercontent.com/AlanInglis/Majoras_Mask_Blue_Dog/refs/heads/main/mm_plots/prob_each_dog_gold.png")
 ```
-<caption><span id="fig1:fig1">Figure 1: </span>The _"towering inferno of physical perfection"_ that is Bender.</caption>
+<caption><span id="fig1:fig1">Figure 1: </span> Estimated win rate of each dog when the selected dog is "Gold". "Gold" dog wins areound 28% of the time. Blue dog never wins! </caption>
 </center>
 
 
 ### Mean Finish Positions
 
-Figure 2 shows the **mean finishing position** of each dog for the gold-selected scenario. Lower means a better average finish (i.e., they place nearer 1st more often). Gold naturally does well, with a mean finish near 5.6, while Blue might be near 9.4, reflecting its struggle to maintain speed in later segments.
+Figure 2 shows the **mean finishing position** of each dog for the gold-selected scenario. Lower means a better average finish (i.e., they place nearer 1st more often). Gold naturally does well, with a mean finish near 5.5, while Blue is near 9, reflecting its struggle to maintain speed in later segments.
 
 ```{r,eval=FALSE}
   df_meanpos <- data.frame(
@@ -556,15 +576,15 @@ Figure 2 shows the **mean finishing position** of each dog for the gold-selected
     theme_bw()
 ```
 <center>
-```{r, out.height='30%', out.width='30%', fig.align="center"}
-  knitr::include_graphics("https://raw.githubusercontent.com/AlanInglis/colouR/master/images/bender.png")
+```{r, out.height='100%', out.width='100%', fig.align="center", echo=FALSE}
+  knitr::include_graphics("https://raw.githubusercontent.com/AlanInglis/Majoras_Mask_Blue_Dog/refs/heads/main/mm_plots/mean_finish_pos_bar_gold.png")
 ```
-<caption><span id="fig1:fig1">Figure 1: </span>The _"towering inferno of physical perfection"_ that is Bender.</caption>
+<caption><span id="fig2:fig2">Figure 2: </span> Average finish postion for each dog when the Gold dog is selected.</caption>
 </center>
 
 ### Rank Distribution
 
-Figure 3 displays how often each dog finishes at each rank (1..14). Notice that many dogs have multi-modal distributions, reflecting the interplay of condition (good, neutral, bad) and random fluctuations.
+Figure 3 displays how often each dog finishes at each rank (1..14). Notice that all dogs have multi-modal distributions (specifically 3 modes), reflecting the interplay of condition (good, neutral, bad) and random fluctuations. Many of the dogs show a similar rank distribution with the exception of the Gold and Blue dog, which show the Gold dog in a low (winning) position when the 'good' condition is applied. Conversly, the Blue dog peaks at around 4th position while the good condition is applied.
 
 ```{r, eval=FALSE}
   finish_df <- melt(results_gold$finish_positions_all)
@@ -585,15 +605,15 @@ Figure 3 displays how often each dog finishes at each rank (1..14). Notice that 
 ```
 
 <center>
-```{r, out.height='30%', out.width='30%', fig.align="center"}
-  knitr::include_graphics("https://raw.githubusercontent.com/AlanInglis/colouR/master/images/bender.png")
+```{r, out.height='100%', out.width='100%', fig.align="center", echo=FALSE}
+  knitr::include_graphics("https://raw.githubusercontent.com/AlanInglis/Majoras_Mask_Blue_Dog/refs/heads/main/mm_plots/density_facet_gold.png")
 ```
-<caption><span id="fig1:fig1">Figure 1: </span>The _"towering inferno of physical perfection"_ that is Bender.</caption>
+<caption><span id="fig3:fig3">Figure 3: </span>Rank distribution for each dog. Here we can see that each mode corresponds to either a good, bad, or neutral condtion.</caption>
 </center>
 
 ## 5.2 Blue Dog Selected
 
-Running the same 100,000 races but selecting the Blue dog changes the results only slightly. In Figure 4, we again see Gold near 28% and Blue near 0%. This suggests that Blue struggles, even with the slight speed-cap boost for being “selected.”
+Running the same 100,000 races but selecting the Blue dog changes the results only slightly. In Figure 4, we again see Gold near 28% and Blue near 0%. This suggests that Blue struggles, even with the slight speed-cap boost for being selected.
 
 ```{r, eval = F}
   library(ggplot2)
@@ -639,10 +659,10 @@ Running the same 100,000 races but selecting the Blue dog changes the results on
 ```
 
 <center>
-```{r, out.height='30%', out.width='30%', fig.align="center"}
-  knitr::include_graphics("https://raw.githubusercontent.com/AlanInglis/colouR/master/images/bender.png")
+```{r, out.height='100%', out.width='100%', fig.align="center", echo = F}
+  knitr::include_graphics("https://raw.githubusercontent.com/AlanInglis/Majoras_Mask_Blue_Dog/refs/heads/main/mm_plots/prob_each_dog_blue.png")
 ```
-<caption><span id="fig1:fig1">Figure 1: </span>The _"towering inferno of physical perfection"_ that is Bender.</caption>
+<caption><span id="fig4:fig4">Figure 4: </span>Win rate when the Blue dog is selected.</caption>
 </center>
 
 ### Mean Finish Positions (Blue-Selected)
@@ -671,14 +691,14 @@ In Figure 5, we see the average finishing rank again: Gold is around 5.65, Blue 
 
 <center>
 ```{r, out.height='30%', out.width='30%', fig.align="center"}
-  knitr::include_graphics("https://raw.githubusercontent.com/AlanInglis/colouR/master/images/bender.png")
+  knitr::include_graphics("https://raw.githubusercontent.com/AlanInglis/Majoras_Mask_Blue_Dog/refs/heads/main/mm_plots/avg_fin_pos_blue.png")
 ```
-<caption><span id="fig1:fig1">Figure 1: </span>The _"towering inferno of physical perfection"_ that is Bender.</caption>
+<caption><span id="fig5:fig5">Figure 5: </span>Average finish position for all dogs when the Blue dog is selected.</caption>
 </center>
 
 ### Rank Distribution (Blue-Selected)
 
-Figure 6 shows the rank density plots again, still with multi-modal patterns for each dog.
+Figure 6 shows the rank density plots again, still with multi-modal patterns for each dog.Again, the result basicaly missor those when the Gold dog is selected.
 
 ```{r, eval=FALSE}
   finish_df <- melt(results_blue$finish_positions_all)
@@ -699,10 +719,10 @@ Figure 6 shows the rank density plots again, still with multi-modal patterns for
 ```
 
 <center>
-```{r, out.height='30%', out.width='30%', fig.align="center"}
-  knitr::include_graphics("https://raw.githubusercontent.com/AlanInglis/colouR/master/images/bender.png")
+```{r, out.height='100%', out.width='100%', fig.align="center", echo = F}
+  knitr::include_graphics("https://raw.githubusercontent.com/AlanInglis/Majoras_Mask_Blue_Dog/refs/heads/main/mm_plots/density_blue.png")
 ```
-<caption><span id="fig1:fig1">Figure 1: </span>The _"towering inferno of physical perfection"_ that is Bender.</caption>
+<caption><span id="fig6:fig6">Figure 6: </span>Rank distribution for each dog when the Blue dog is selected.</caption>
 </center>
 
 ## Gold and Blue Dog Comparisons
@@ -747,15 +767,15 @@ Figure 7 compares each dog’s **winning rate** side by side for the “Gold sel
 ```
 
 <center>
-```{r, out.height='30%', out.width='30%', fig.align="center"}
-  knitr::include_graphics("https://raw.githubusercontent.com/AlanInglis/colouR/master/images/bender.png")
+```{r, out.height='100%', out.width='100%', fig.align="center", echo = F}
+  knitr::include_graphics("https://raw.githubusercontent.com/AlanInglis/Majoras_Mask_Blue_Dog/refs/heads/main/mm_plots/com_1.png")
 ```
-<caption><span id="fig1:fig1">Figure 1: </span>The _"towering inferno of physical perfection"_ that is Bender.</caption>
+<caption><span id="fig7:fig7">Figure 7: </span>Win rate for each dog under both selection conditions (i.e., Gold and Blue dog selected.</caption>
 </center>
 
 ### Differences in Probabilities
 
-Figure 8 plots the **difference** in each dog’s winning rate between “Gold selected” and “Blue selected” simulations:
+Figure 8 plots the **difference** in each dog’s winning rate between “Gold selected” and “Blue selected” simulations. Although some dogs look like they have markedly different win rates (e.g., Brown_2 or White_4), we can see that the difference is actually only around 0.1%, which is basically negligable. 
 
 ```{r, eval = F}
   df_diff <- merge(df_blue, df_gold, by = "Dog", suffixes = c("_Blue", "_Gold"))
@@ -781,10 +801,10 @@ Figure 8 plots the **difference** in each dog’s winning rate between “Gold s
 ```
 
 <center>
-```{r, out.height='30%', out.width='30%', fig.align="center"}
-  knitr::include_graphics("https://raw.githubusercontent.com/AlanInglis/colouR/master/images/bender.png")
+```{r, out.height='100%', out.width='100%', fig.align="center", echo=F}
+  knitr::include_graphics("https://raw.githubusercontent.com/AlanInglis/Majoras_Mask_Blue_Dog/refs/heads/main/mm_plots/diff_plot.png")
 ```
-<caption><span id="fig1:fig1">Figure 1: </span>The _"towering inferno of physical perfection"_ that is Bender.</caption>
+<caption><span id="fig1:fig1">Figure 1: </span> Difference in win probabilty under different selection scenarios.</caption>
 </center>
 
 ### Comparison Table
@@ -830,17 +850,15 @@ Below we compare each dog’s **mean finishing position** and **empirical winnin
 ####  Table 3: Races Required for 99.99% Confidence
 | Color | Gold Strategy | Blue Strategy |
 |-------|--------------|---------------|
-| White | 22           | 22            |
-| Gray  | 505          | 540           |
-| Beige | 517          | 530           |
-| Brown | 24           | 24            |
 | Blue  | Inf          | Inf           |
 | Gold  | 28           | 28            |
+
+In Table 3 we can see that Gold dog would have to race at least 28 races to be 'guaranteed' a 99.99% chance of wining. Whereas Blue dog is considered to have to race an infinate number of races to have a 99.99% chance of winning. 
 
 
 # Conclusion
 
-Without relying on any glitches, it is impossible for the Blue dog to ever win a race. In Contrast to XXXX's video, these simulations never showed Blue dog achieving 1st, 2nd, or even 3rd! However, Blue dog did come 4th 28,570 times. This contrast between the simulation and the results shown in the XXXX video are most likely due to several assumptions and shortcuts that had to be taken to 'accuratley' simulate this in R. For example, in the simulation, it is assumed that the track is a straight line. Whereas, in the game, the track is curved and other related factors affect the win rates (such as a random speed fluctuation depending on the angle of the dog on the track that is present in the real game). Despite the coding differences, the results show what we have always already known - gold dog wins a lot and blue dog never wins!!! 
+This study tells us that without relying on any glitches, it is impossible for the Blue dog to ever win a race. In Contrast to Vidya James' YouTube video, these simulations never showed Blue dog achieving 1st, 2nd, or even 3rd! However, Blue dog did come 4th 28,570 times. This contrast between the simulation and the results shown in the video are most likely due to several assumptions and shortcuts that had to be taken to 'accuratley' simulate this in R. For example, in the simulation, it is assumed that the track is a straight line. Whereas, in the game, the track is curved and other related factors affect the win rates (such as a random speed fluctuation depending on the angle of the dog on the track that is present in the real game). Despite the coding differences, the results show what we have always already known - gold dog wins a lot and blue dog never wins!!! 
 
 
 
