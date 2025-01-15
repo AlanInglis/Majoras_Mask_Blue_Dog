@@ -69,7 +69,8 @@ The **original C source code** is hosted on the Marjoa's Mask [zeldaret](https:/
 
 2. Install R and the required libraries:
    - Ensure you have R installed on your system.
-   - The script relies only on base R functions, so no additional packages are required.
+   - The script relies only on base R functions, so no additional packages are required for running the simulation.
+   To create the visualisations, I used `ggplot2`.
    
 Or, just simply copy and paste the main function!
 
@@ -161,20 +162,13 @@ table(results$selected_dog_positions)
 
 Contributions are welcome! If you find a bug or have a suggestion for improvement, please create an issue or submit a pull request.
 
----
-
-## License
-
-This project is licensed under the MIT License. See the LICENSE file for details.
-
----
 
 
 ## Acknowledgements
 
-This project was inspired by the dog race mechanics from a classic Nintendo 64 game found at XXXXXXXXXX.
-Special thanks to the community for making the game's source code available for study and analysis and to 
-XXXXXXXX for inspiring this analysis.
+This project was inspired by Vidya James YouTube video [Why Majora's Mask's Blue Dog Took 25 Years to Win the Race](https://www.youtube.com/watch?v=Y1l6Xj4PLEk).
+Special thanks to the community for making the game's source code available for study and analysis
+hosted on the Majora's Mask [zeldaret](https://github.com/zeldaret/mm) GitHub repository.
 
 
 
