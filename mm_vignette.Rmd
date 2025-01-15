@@ -690,7 +690,7 @@ In Figure 5, we see the average finishing rank again: Gold is around 5.65, Blue 
 ```
 
 <center>
-```{r, out.height='30%', out.width='30%', fig.align="center"}
+```{r, out.height='100%', out.width='100%', fig.align="center", echo = F}
   knitr::include_graphics("https://raw.githubusercontent.com/AlanInglis/Majoras_Mask_Blue_Dog/refs/heads/main/mm_plots/avg_fin_pos_blue.png")
 ```
 <caption><span id="fig5:fig5">Figure 5: </span>Average finish position for all dogs when the Blue dog is selected.</caption>
